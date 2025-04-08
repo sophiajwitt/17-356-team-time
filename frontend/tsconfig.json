@@ -7,5 +7,5 @@
   "compilerOptions": {
     "esModuleInterop": true,
     "jsx": "react" // or "react-native"
-  },
+  }
 }
