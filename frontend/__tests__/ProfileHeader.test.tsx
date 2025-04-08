@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import axios from "axios";
 import React from "react";
-import { ProfileHeader } from "../src/components/ProfileHeader"; // Adjust import path as needed
+import { ProfileHeader } from "../src/components/ProfileHeader";
 
 // Mock axios
 jest.mock("axios");

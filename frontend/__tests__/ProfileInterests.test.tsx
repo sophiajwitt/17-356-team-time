@@ -3,7 +3,7 @@ import React from "react";
 import {
   ProfileInterests,
   ResearchInterestProps,
-} from "../src/components/ProfileInterests"; // Adjust import path as needed
+} from "../src/components/ProfileInterests";
 
 // Helper function to create a test component with default props
 const createTestComponent = (
