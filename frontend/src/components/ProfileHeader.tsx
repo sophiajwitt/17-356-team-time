@@ -1,6 +1,5 @@
 import axios from "axios";
 import {
-  Camera,
   Check,
   Github,
   Globe,
@@ -13,22 +12,54 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import React, { useRef, useState } from "react";
-import { PROFILE_API_ENDPOINT } from "../consts";
+import React, { useEffect, useRef, useState } from "react";
+import {
+  PROFILE_API_ENDPOINT,
+  PROFILE_IMAGE_NAME,
+  PROFILE_IMG_ENDPOINT,
+  FOLLOWS_API_ENDPOINT,
+} from "../consts";
 import { Profile, ProfileHeaderProps } from "../types";
 import { ProfileInterests } from "./ProfileInterests";
+import ProfileImageUploader from "./ProfileUpload";
 
 export const ProfileHeader = (props: ProfileHeaderProps) => {
   const [showMenu, setShowMenu] = useState(false);
-  const [profileHover, setProfileHover] = useState(false);
+  // const [profileHover, setProfileHover] = useState(false);
   const [showImageUpload, setShowImageUpload] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isFollowing, setisFollowing] = useState(props.isFollowing);
+  const [isFollowing, setIsFollowing] = useState(props.isFollowing);
+  const [currentImage, setCurrentImage] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [imageBlob, setImageBlob] = useState<Blob | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [tempBio, setTempBio] = useState(props.bio);
   const [tempInterests, setTempInterests] = useState(
     props.fieldOfInterest || "",
   );
+
+  // Check follow status when component mounts
+  useEffect(() => {
+    const checkFollowStatus = async () => {
+      const userData = localStorage.getItem("userData");
+      if (!userData || props.isOwnProfile) return;
+
+      const currentUserId = JSON.parse(userData).username;
+      try {
+        const response = await axios.get(
+          `${FOLLOWS_API_ENDPOINT}/${props.userId}/status`,
+          {
+            params: { followerId: currentUserId },
+          },
+        );
+        setIsFollowing(response.data.isFollowing);
+      } catch (error) {
+        console.error("Error checking follow status:", error);
+      }
+    };
+
+    checkFollowStatus();
+  }, [props.userId, props.isOwnProfile]);
 
   // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -54,6 +85,95 @@ export const ProfileHeader = (props: ProfileHeaderProps) => {
     lastName: props.lastName,
     affiliation: props.institution,
   });
+
+  // dealing with uploading/deleting images from S3
+  const handleUploadImage = async () => {
+    if (!imageBlob) {
+      return;
+    }
+
+    try {
+      setUploadProgress(0);
+
+      // Create a new file from the blob with a consistent filename
+      const pngFile = new File([imageBlob], PROFILE_IMAGE_NAME, {
+        type: "image/png",
+      });
+
+      const formData = new FormData();
+      formData.append("image", pngFile);
+
+      // Check if we should update or create
+      if (currentImage) {
+        // Update existing image
+        await axios.put(`${PROFILE_IMG_ENDPOINT}/${props.userId}`, formData, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          onUploadProgress: (progressEvent) => {
+            const progress = progressEvent.total
+              ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+              : 0;
+            setUploadProgress(progress);
+          },
+        });
+      } else {
+        // Upload new image
+        await axios.post(`${PROFILE_IMG_ENDPOINT}/${props.userId}`, formData, {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+          onUploadProgress: (progressEvent) => {
+            const progress = progressEvent.total
+              ? Math.round((progressEvent.loaded * 100) / progressEvent.total)
+              : 0;
+            setUploadProgress(progress);
+          },
+        });
+      }
+
+      setImageBlob(null);
+      setUploadProgress(0);
+      await fetchCurrentImage();
+    } catch (err) {
+      console.error("Error uploading image:", err);
+    }
+  };
+
+  const handleDeleteImage = async () => {
+    try {
+      if (
+        !window.confirm("Are you sure you want to delete your profile image?")
+      ) {
+        return;
+      }
+
+      await axios.delete(`${PROFILE_IMG_ENDPOINT}/${props.userId}`);
+    } catch (err) {
+      console.error("Error deleting image:", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchCurrentImage();
+  }, [props.userId]);
+
+  const fetchCurrentImage = async () => {
+    try {
+      const response = await axios.get(
+        `${PROFILE_IMG_ENDPOINT}/${props.userId}`,
+      );
+      const imageUrl = response.data;
+
+      if (imageUrl) {
+        setCurrentImage(imageUrl.url);
+      } else {
+        setCurrentImage(null);
+      }
+    } catch (err) {
+      console.error("Error fetching image:", err);
+    }
+  };
 
   // Handle bio change
   const handleBioChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -88,17 +208,24 @@ export const ProfileHeader = (props: ProfileHeaderProps) => {
       .catch((error: any) => {
         console.log(error);
       });
+
+    if (currentImage === null) {
+      handleDeleteImage();
+    } else if (imageBlob) {
+      handleUploadImage();
+    }
     setIsEditing(false);
   };
 
   // Cancel editing
-  const handleCancelEdit = () => {
+  const handleCancelEdit = async () => {
     setEditFormData({
       firstName: props.firstName,
       lastName: props.lastName,
       affiliation: props.institution,
     });
     setTempInterests(props.fieldOfInterest || "");
+    await fetchCurrentImage();
     setIsEditing(false);
   };
 
@@ -119,12 +246,92 @@ export const ProfileHeader = (props: ProfileHeaderProps) => {
 
   // Toggle follow state
   const toggleFollow = () => {
-    // TODO: push follow changes to server
-    setisFollowing(!isFollowing);
+    const endpoint = `${FOLLOWS_API_ENDPOINT}/${props.userId}`;
+    const method = isFollowing ? "delete" : "post";
+
+    // Get the current user's ID from localStorage
+    const userData = localStorage.getItem("userData");
+    if (!userData) {
+      console.error("No user data found");
+      return;
+    }
+
+    const currentUserId = JSON.parse(userData).username;
+
+    // Don't allow following yourself
+    if (currentUserId === props.userId) {
+      console.error("Cannot follow yourself");
+      return;
+    }
+
+    // Optimistically update the UI
+    const newFollowingState = !isFollowing;
+    setIsFollowing(newFollowingState);
     props.setResearcher({
       ...props,
-      followers: isFollowing ? props.followers - 1 : props.followers + 1,
+      followers: newFollowingState
+        ? (props.followers || 0) + 1
+        : (props.followers || 0) - 1,
+      isFollowing: newFollowingState,
     });
+
+    // Make the request based on the method
+    if (method === "delete") {
+      axios
+        .delete(endpoint, { data: { followerId: currentUserId } })
+        .catch((error) => {
+          // Revert the optimistic update if the request fails
+          setIsFollowing(!newFollowingState);
+          props.setResearcher({
+            ...props,
+            followers: !newFollowingState
+              ? (props.followers || 0) + 1
+              : (props.followers || 0) - 1,
+            isFollowing: !newFollowingState,
+          });
+          handleFollowError(error);
+        });
+    } else {
+      axios.post(endpoint, { followerId: currentUserId }).catch((error) => {
+        // Revert the optimistic update if the request fails
+        setIsFollowing(!newFollowingState);
+        props.setResearcher({
+          ...props,
+          followers: !newFollowingState
+            ? (props.followers || 0) + 1
+            : (props.followers || 0) - 1,
+          isFollowing: !newFollowingState,
+        });
+        handleFollowError(error);
+      });
+    }
+  };
+
+  const handleFollowError = (error: any) => {
+    console.error("Error toggling follow:", error);
+    if (error.response) {
+      if (error.response.status === 404) {
+        console.error("Profile not found:", error.response.data.error);
+      } else if (error.response.status === 409) {
+        // If we get a 409, it means we're already following/unfollowing
+        // Update local state to match server state
+        const newFollowingState = !isFollowing;
+        setIsFollowing(newFollowingState);
+        props.setResearcher({
+          ...props,
+          followers: newFollowingState
+            ? (props.followers || 0) + 1
+            : (props.followers || 0) - 1,
+          isFollowing: newFollowingState,
+        });
+      } else {
+        console.error("Server error:", error.response.data.error);
+      }
+    } else if (error.request) {
+      console.error("No response received from server");
+    } else {
+      console.error("Error setting up request:", error.message);
+    }
   };
 
   // Handle profile picture upload
@@ -157,26 +364,13 @@ export const ProfileHeader = (props: ProfileHeaderProps) => {
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <div className="flex flex-col md:flex-row items-center">
           {/* Profile Picture */}
-          <div className="mb-4 md:mb-0 md:mr-6">
-            <div
-              className="w-32 h-32 rounded-full overflow-hidden relative"
-              onMouseEnter={() => isEditing && setProfileHover(true)}
-              onMouseLeave={() => setProfileHover(false)}
-              onClick={() => isEditing && setShowImageUpload(true)}
-              data-testid="profile-picture-id"
-            >
-              <img
-                src={props.profilePicture}
-                alt={`${props.firstName} ${props.lastName}'s profile`}
-                className="w-full h-full object-cover"
-              />
-              {isEditing && profileHover && (
-                <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center cursor-pointer">
-                  <Camera size={24} color="white" />
-                </div>
-              )}
-            </div>
-          </div>
+          <ProfileImageUploader
+            isEditing={isEditing}
+            currentImage={currentImage}
+            setCurrentImage={setCurrentImage}
+            setBlob={setImageBlob}
+            uploadProgress={uploadProgress}
+          />
 
           {/* Profile Info */}
           <div className="flex-1 text-center md:text-left">
@@ -270,64 +464,68 @@ export const ProfileHeader = (props: ProfileHeaderProps) => {
                   </div>
 
                   <div className="flex flex-col space-y-2 items-end">
-                    {/* Menu Button */}
-                    <div className="relative" ref={menuRef}>
+                    {/* Menu Button - Only show when viewing own profile */}
+                    {props.isOwnProfile && (
+                      <div className="relative" ref={menuRef}>
+                        <button
+                          onClick={() => setShowMenu(!showMenu)}
+                          className="p-2 rounded-full hover:bg-gray-200"
+                          data-testid="hamburger-menu-button"
+                        >
+                          <MoreVertical size={20} />
+                        </button>
+
+                        {/* Dropdown Menu */}
+                        {showMenu && (
+                          <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg z-10 py-1">
+                            <button
+                              className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
+                              onClick={() => {
+                                setIsEditing(true);
+                                setShowMenu(false);
+                              }}
+                            >
+                              <Pencil size={16} className="mr-2" />
+                              Edit Profile
+                            </button>
+                            <button
+                              className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left"
+                              onClick={() => {
+                                setShowDeleteConfirm(true);
+                                setShowMenu(false);
+                              }}
+                            >
+                              <Trash2 size={16} className="mr-2" />
+                              Delete Profile
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Follow Button - Only show when viewing another user's profile */}
+                    {!props.isOwnProfile && (
                       <button
-                        onClick={() => setShowMenu(!showMenu)}
-                        className="p-2 rounded-full hover:bg-gray-200"
-                        data-testid="hamburger-menu-button"
+                        onClick={toggleFollow}
+                        className={`flex items-center justify-center px-4 py-2 rounded-full text-sm font-medium ${
+                          isFollowing
+                            ? "bg-gray-200 text-gray-800 hover:bg-gray-300"
+                            : "bg-blue-600 text-white hover:bg-blue-700"
+                        }`}
                       >
-                        <MoreVertical size={20} />
+                        {isFollowing ? (
+                          <>
+                            <Check size={16} className="mr-1" />
+                            Following
+                          </>
+                        ) : (
+                          <>
+                            <UserPlus size={16} className="mr-1" />
+                            Follow
+                          </>
+                        )}
                       </button>
-
-                      {/* Dropdown Menu */}
-                      {showMenu && (
-                        <div className="absolute right-0 mt-1 w-48 bg-white rounded-md shadow-lg z-10 py-1">
-                          <button
-                            className="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 w-full text-left"
-                            onClick={() => {
-                              setIsEditing(true);
-                              setShowMenu(false);
-                            }}
-                          >
-                            <Pencil size={16} className="mr-2" />
-                            Edit Profile
-                          </button>
-                          <button
-                            className="flex items-center px-4 py-2 text-sm text-red-600 hover:bg-gray-100 w-full text-left"
-                            onClick={() => {
-                              setShowDeleteConfirm(true);
-                              setShowMenu(false);
-                            }}
-                          >
-                            <Trash2 size={16} className="mr-2" />
-                            Delete Profile
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Follow Button */}
-                    <button
-                      onClick={toggleFollow}
-                      className={`flex items-center justify-center px-4 py-2 rounded-full text-sm font-medium ${
-                        isFollowing
-                          ? "bg-gray-200 text-gray-800 hover:bg-gray-300"
-                          : "bg-blue-600 text-white hover:bg-blue-700"
-                      }`}
-                    >
-                      {isFollowing ? (
-                        <>
-                          <Check size={16} className="mr-1" />
-                          Following
-                        </>
-                      ) : (
-                        <>
-                          <UserPlus size={16} className="mr-1" />
-                          Follow
-                        </>
-                      )}
-                    </button>
+                    )}
                   </div>
                 </div>
 

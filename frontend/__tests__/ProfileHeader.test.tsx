@@ -21,6 +21,7 @@ const createTestComponent = (overrideProps = {}) => {
     followers: 20,
     email: "test@test.com",
     isFollowing: false,
+    isOwnProfile: true,
     socials: {
       twitter: "https://twitter.com/test",
       github: "https://github.com/test",
@@ -107,36 +108,73 @@ describe("ProfileHeader Component", () => {
       });
     });
 
-    test("cancels edit mode", () => {
+    test("cancels edit mode", async () => {
+      // Set up the mock response before triggering any actions
+      mockedAxios.get.mockResolvedValue({
+        data: { url: "123/profile.png" },
+      });
+
       createTestComponent();
 
       // Open edit mode
       fireEvent.click(screen.getByTestId("hamburger-menu-button"));
       fireEvent.click(screen.getByText("Edit Profile"));
 
+      // Verify we're in edit mode by checking for edit-mode-specific elements
+      expect(screen.getByLabelText("First name")).toBeDefined();
+      expect(screen.getByLabelText("Last name")).toBeDefined();
+
       // Cancel editing
       fireEvent.click(screen.getByText("Cancel"));
 
-      // Verify back to view mode
+      // Wait for the API call that happens during cancellation
+      await waitFor(() => {
+        expect(mockedAxios.get).toHaveBeenCalledWith(
+          expect.stringContaining("/123"),
+        );
+      });
+
+      // Verify we're back in view mode by checking for view-mode elements
+      // and ensuring edit-mode elements are gone
       expect(screen.getByText("John Doe")).toBeDefined();
+      expect(screen.queryByLabelText("First name")).toBeNull();
+      expect(screen.queryByLabelText("Last name")).toBeNull();
     });
   });
 
   // Follow Functionality Tests
   describe("Follow Functionality", () => {
-    test("toggles follow state", () => {
-      const setResearcher = jest.fn();
-      createTestComponent({ setResearcher });
+    beforeEach(() => {
+      // Mock localStorage
+      const mockUserData = JSON.stringify({ username: "testuser" });
+      Storage.prototype.getItem = jest.fn(() => mockUserData);
 
-      // Click follow button
-      const followButton = screen.getByText("Follow");
+      // Mock successful API response
+      mockedAxios.post.mockResolvedValue({});
+    });
+
+    test("toggles follow state", async () => {
+      const setResearcher = jest.fn();
+      createTestComponent({ setResearcher, isOwnProfile: false });
+
+      // Click follow button using a more flexible text matcher
+      const followButton = screen.getByRole("button", { name: /follow/i });
       fireEvent.click(followButton);
 
-      // Check if follow state updated
-      expect(setResearcher).toHaveBeenCalledWith(
-        expect.objectContaining({
-          followers: 21, // Increased by 1
-        }),
+      // Wait for the state update
+      await waitFor(() => {
+        expect(setResearcher).toHaveBeenCalledWith(
+          expect.objectContaining({
+            followers: 21, // Increased by 1
+            isFollowing: true,
+          }),
+        );
+      });
+
+      // Verify the API call was made
+      expect(mockedAxios.post).toHaveBeenCalledWith(
+        expect.stringContaining("/api/follows/123"),
+        expect.objectContaining({ followerId: "testuser" }),
       );
     });
   });
@@ -162,21 +200,6 @@ describe("ProfileHeader Component", () => {
         );
         expect(window.open).toHaveBeenCalledWith("/");
       });
-    });
-  });
-
-  // Image Upload Tests
-  describe("Image Upload", () => {
-    test("opens file selector", () => {
-      createTestComponent();
-
-      // Hover over profile picture and click
-      fireEvent.click(screen.getByTestId("hamburger-menu-button"));
-      fireEvent.click(screen.getByText("Edit Profile"));
-      fireEvent.click(screen.getByTestId("profile-picture-id"));
-
-      // Check upload popup is visible
-      expect(screen.getByText("Update Profile Picture")).toBeDefined();
     });
   });
 
