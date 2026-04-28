@@ -20,8 +20,8 @@ jobs:
               env:
                 PORTER_APP_NAME: frontend
                 PORTER_CLUSTER: "1"
-                PORTER_DEPLOYMENT_TARGET_ID: 0f7d13c3-5953-4475-8ef6-ae1b998f402b
+                PORTER_DEPLOYMENT_TARGET_ID: 5405ed4c-fa2f-415e-85f9-655468ae5202
                 PORTER_HOST: https://witt.withporter.run
                 PORTER_PROJECT: "1"
                 PORTER_TAG: ${{ steps.vars.outputs.sha_short }}
-                PORTER_TOKEN: ${{ secrets.PORTER_APP_1_968714858 }}
+                PORTER_TOKEN: ${{ secrets.PORTER_APP_1_2 }}
